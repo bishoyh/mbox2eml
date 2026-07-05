@@ -26,7 +26,9 @@
 // mbox2eml fixes this. It slices the mbox file at every new email boundary and writes out individual `.eml` files to a target directory.
 // It uses every core on your CPU to chew through gigabytes quickly, provided you have the RAM to hold the input file.
 //
-// Compile with: g++ -O3 -std=c++23 -pthread -lstdc++fs -o mbox2eml mbox2eml.cc 
+// Compile with: g++ -O3 -std=c++23 -pthread -o mbox2eml mbox2eml.cc
+// (or just run `make`). std::filesystem is part of libstdc++ since GCC 9, so
+// the old -lstdc++fs link flag is no longer needed.
 
 
 #include <iostream>

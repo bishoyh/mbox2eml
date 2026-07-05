@@ -1,12 +1,16 @@
 # mbox2eml
 
+<img src="docs/assets/icon.png" alt="mbox2eml" width="180" align="right">
+
 Explode an mbox archive into individual `.eml` files. Fast, parallel, no dependencies beyond a C++23 compiler.
+
+Full docs: **<https://twardoch.github.io/mbox2eml/>**
 
 ## The mbox problem
 
-An mbox file is one giant text file. Every email in your inbox — all of them — concatenated together, separated by a line that starts with `From `. Google Takeout gives you your Gmail this way. So does Thunderbird when you export a folder.
+An mbox file is one giant text file. Every email in a folder — all of them — concatenated together, each starting with a line that begins `From `. Google Takeout gives you your Gmail this way. So does Thunderbird when you export a folder.
 
-The format is portable but useless for anything else. Modern email clients, mail archivers, and search tools want individual `.eml` files — one message, one file, standard RFC 2822 format. `mbox2eml` does the conversion.
+The format is portable but useless for anything else. Modern email clients, mail archivers, and search tools want individual `.eml` files — one message, one file, standard RFC 2822. `mbox2eml` does the conversion, and it does it in seconds.
 
 ## What it does
 
@@ -15,7 +19,7 @@ The format is portable but useless for anything else. Modern email clients, mail
 3. Slices each detected message into its own string.
 4. Writes them out as `email_1.eml`, `email_2.eml`, … in parallel across all CPU cores.
 
-A 10 GB mbox with 500,000 messages takes seconds on modern hardware, not hours.
+A 10 GB mbox with 500,000 messages takes seconds on modern hardware, not hours — provided you have the RAM to hold the input file.
 
 ## Build
 
@@ -27,7 +31,7 @@ cd mbox2eml
 make
 ```
 
-The resulting `mbox2eml` binary has no runtime dependencies.
+Useful targets: `make test` runs the regression suite, `make install` copies the binary to `/usr/local/bin` (override with `PREFIX=...`), `make clean` removes it. The resulting binary has no runtime dependencies.
 
 ## Usage
 
@@ -35,9 +39,7 @@ The resulting `mbox2eml` binary has no runtime dependencies.
 mbox2eml <mbox_file> <output_directory>
 ```
 
-The output directory is created if it does not exist.
-
-## Example
+The output directory is created if it does not exist. Output filenames are `email_1.eml` through `email_N.eml`, in the order the messages appear in the mbox.
 
 ```bash
 mbox2eml ~/Downloads/Takeout/Mail/All\ mail\ Including\ Spam\ and\ Trash.mbox ~/mail/eml/
@@ -45,30 +47,18 @@ mbox2eml ~/Downloads/Takeout/Mail/All\ mail\ Including\ Spam\ and\ Trash.mbox ~/
 # Finished processing all emails.
 ```
 
-Output filenames are `email_1.eml` through `email_N.eml` in the order the messages appear in the mbox. Import the folder into any `.eml`-aware client (Apple Mail, Thunderbird, Outlook) or feed it to a mail archiver.
+Import the folder into any `.eml`-aware client (Apple Mail, Thunderbird, Outlook) or feed it to a mail archiver.
 
-## mbox format explained
+`mbox2eml` exits `0` when every message is written, and `1` on bad arguments, a missing input file, an un-writable output directory, or any failed write — so scripts can detect a partial extraction.
 
-The mbox format dates back to Unix in the 1970s. Every message starts with a special "From " separator line (note the trailing space — that distinguishes it from the email header `From:`):
+## How boundaries are detected
 
-```
-From user@example.com Sat Jan  1 00:00:00 2000
-From: Alice <user@example.com>
-To: Bob <bob@example.com>
-Subject: Hello
+A line that merely starts with `From ` is not enough; email bodies contain such lines too. `mbox2eml` treats a line as a boundary only when it parses as a real mbox separator: `From`, a sender, a weekday, month, one-or-two-digit day, an `HH:MM:SS` time, and a four-digit year (an optional `+0000` timezone before the year is tolerated). Anything else stays in the message body. See [How it works](https://twardoch.github.io/mbox2eml/how-it-works.html) for the full rules.
 
-Body text here.
+## Memory note
 
-From another@example.com Sat Jan  1 00:01:00 2000
-...
-```
-
-`mbox2eml` detects these boundaries by checking for lines that start with `From ` followed by a sender address and a date with a recognisable year. Each detected boundary starts a new `.eml` file.
-
-## .eml format
-
-An `.eml` file is a single RFC 2822 email message: headers, a blank line, then the body. Most email clients open `.eml` files directly. They are plain text (or MIME-encoded), human-readable, and trivially parseable by any email library.
+`mbox2eml` reads the whole input into RAM before writing. That is what makes it fast, but the input file must fit in memory. For files larger than your available RAM, split the mbox first.
 
 ## License
 
-MIT
+MIT. Original work by Bishoy H.; modernized and maintained by Adam Twardoch.
