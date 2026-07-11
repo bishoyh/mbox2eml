@@ -22,13 +22,13 @@
 // THE SOFTWARE.
 //
 // Description:
-// This tool, mbox2eml, is designed to extract individual email messages from an
-// mbox file and save them as separate .eml files in a given folder. It utilizes multithreading to
-// speed up the processing of large mbox files by distributing the workload across
-// multiple CPU cores, but it requires enough memory to load the mbox file. The tool takes two command-line arguments: the path to the
-// mbox file and the output directory where the .eml files will be saved.
-
-// Compile with  g++ -O3 -std=c++23 -pthread -lstdc++fs -o mbox2eml mbox2eml.cc 
+// mbox files dump thousands of emails into one massive text block. This makes them portable but useless in modern email clients.
+// mbox2eml fixes this. It slices the mbox file at every new email boundary and writes out individual `.eml` files to a target directory.
+// It uses every core on your CPU to chew through gigabytes quickly, provided you have the RAM to hold the input file.
+//
+// Compile with: g++ -O3 -std=c++23 -pthread -o mbox2eml mbox2eml.cc
+// (or just run `make`). std::filesystem is part of libstdc++ since GCC 9, so
+// the old -lstdc++fs link flag is no longer needed.
 
 
 #include <iostream>
@@ -45,23 +45,28 @@
 
 namespace fs = std::filesystem;
 
-// Structure to hold email data
+// Holds the raw string content of a single email, ready to dump to a file.
 struct Email {
   std::string content;
 };
 
+// Returns true if a string contains nothing but numeric digits.
+// Used to validate dates and years in mbox headers.
 bool isAllDigits(const std::string& value) {
   return !value.empty() &&
          std::all_of(value.begin(), value.end(),
                      [](unsigned char ch) { return std::isdigit(ch) != 0; });
 }
 
+// Scans a line to see if it looks like the start of a new email in the mbox format.
+// The classic mbox boundary line looks like this:
+// "From sender Sat Jan  1 00:00:00 2022"
 bool isLikelyMboxSeparator(const std::string& line) {
   if (!line.starts_with("From ")) {
     return false;
   }
 
-  // ctime-like mbox separator: "From sender Sat Jan  1 00:00:00 2022"
+  // Break the line into space-separated chunks.
   std::istringstream iss(line);
   std::string from;
   std::string sender;
@@ -79,14 +84,29 @@ bool isLikelyMboxSeparator(const std::string& line) {
     return false;
   }
 
+  // The day must be a number, 1 or 2 digits long.
   if (!isAllDigits(day_of_month) || day_of_month.size() > 2) {
     return false;
   }
 
+  // The time must look like HH:MM:SS, which means exactly two colons.
   if (std::count(time_of_day.begin(), time_of_day.end(), ':') != 2) {
     return false;
   }
 
+  // Some systems inject a timezone offset right before the year.
+  // e.g., "From sender Wed Mar 25 09:23:47 +0000 2026"
+  // If we spot a + or - followed by numbers, skip it and grab the real year next.
+  if (!year.empty() && (year[0] == '+' || year[0] == '-') &&
+      year.size() >= 2 && isAllDigits(year.substr(1))) {
+    std::string actual_year;
+    if (!(iss >> actual_year)) {
+      return false;
+    }
+    year = actual_year;
+  }
+
+  // The year must be exactly a 4-digit number.
   if (!isAllDigits(year) || year.size() != 4) {
     return false;
   }
@@ -94,7 +114,8 @@ bool isLikelyMboxSeparator(const std::string& line) {
   return true;
 }
 
-// Function to extract individual emails from the mbox file
+// Reads the entire mbox file into memory and slices it into individual Email structs.
+// Throws std::runtime_error if the file won't open or reading fails.
 std::vector<Email> extractEmails(const std::string& mbox_file) {
   std::vector<Email> emails;
   std::ifstream file(mbox_file);
@@ -107,22 +128,28 @@ std::vector<Email> extractEmails(const std::string& mbox_file) {
   bool in_message = false;
 
   while (std::getline(file, line)) {
+    // Strip Windows-style carriage returns if they exist.
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    
+    // When we hit a new "From " boundary, save the current email and start a new one.
     if (isLikelyMboxSeparator(line)) {
-      // Start of a new email
       if (in_message && !current_email.content.empty()) {
         emails.push_back(current_email);
       }
       current_email.content = line + "\n";
       in_message = true;
     } else {
-      // Ignore preamble lines before the first valid mbox separator.
+      // Append the line to the active email. 
+      // We skip lines before the first valid "From " boundary.
       if (in_message) {
         current_email.content += line + "\n";
       }
     }
   }
 
-  // Add the last email
+  // Don't forget to push the very last email in the file.
   if (in_message && !current_email.content.empty()) {
     emails.push_back(current_email);
   }
@@ -134,7 +161,8 @@ std::vector<Email> extractEmails(const std::string& mbox_file) {
   return emails;
 }
 
-// Function to save an email to an eml file
+// Dumps an Email struct to disk as a numbered .eml file.
+// Returns false if the file could not be created or written.
 bool saveEmail(const Email& email, const std::string& output_dir, std::size_t email_count) {
   std::string filename = output_dir + "/email_" + std::to_string(email_count) + ".eml";
   std::ofstream outfile(filename, std::ios::binary);
@@ -145,7 +173,8 @@ bool saveEmail(const Email& email, const std::string& output_dir, std::size_t em
   return outfile.good();
 }
 
-// Worker thread function to process emails
+// Runs on a background thread. Grabs a slice of the extracted emails array 
+// and writes them to disk sequentially. Threads share a mutex just to print safely.
 void workerThread(const std::vector<Email>& emails, const std::string& output_dir, 
                   std::size_t start_index, std::size_t end_index, std::mutex& log_mutex,
                   std::atomic<int>& failed_writes) {
@@ -163,7 +192,7 @@ void workerThread(const std::vector<Email>& emails, const std::string& output_di
 }
 
 int main(int argc, char* argv[]) {
-  // Check for correct number of arguments
+  // Enforce usage constraints.
   if (argc != 3) {
     std::cerr << "mbox2eml: Extract individual email messages from an mbox file and save them as separate .eml files." << std::endl;
     std::cerr << "Error: Incorrect number of arguments." << std::endl;
@@ -183,7 +212,7 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  // Create the output directory if it doesn't exist
+  // Create the output directory if missing. Bomb out if a file exists with that name.
   try {
     if (fs::exists(output_dir)) {
       if (!fs::is_directory(output_dir)) {
@@ -198,7 +227,7 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  // Extract emails from the mbox file
+  // Load everything into memory.
   std::vector<Email> emails;
   try {
     emails = extractEmails(mbox_file);
@@ -214,23 +243,22 @@ int main(int argc, char* argv[]) {
     return 0;
   }
 
-  // Determine the number of threads to use (e.g., based on CPU cores)
+  // Max out CPU cores for the disk write phase.
   std::size_t num_threads = std::thread::hardware_concurrency();
   if (num_threads == 0) {
-    num_threads = 2; // Default to 2 threads if hardware concurrency is unknown
+    num_threads = 2; // Fallback if hardware query fails
   }
   num_threads = std::min<std::size_t>(num_threads, emails.size());
 
-  // Calculate the number of emails per thread
   std::size_t emails_per_thread = emails.size() / num_threads;
   std::size_t remaining_emails = emails.size() % num_threads;
 
-  // Create and launch worker threads
   std::vector<std::thread> threads;
   std::mutex log_mutex;
   std::atomic<int> failed_writes{0};
   std::size_t start_index = 0;
 
+  // Distribute chunks of emails to background threads.
   for (std::size_t i = 0; i < num_threads; ++i) {
     std::size_t end_index = start_index + emails_per_thread;
     if (i < remaining_emails) {
@@ -241,7 +269,7 @@ int main(int argc, char* argv[]) {
     start_index = end_index;
   }
 
-  // Wait for all threads to finish
+  // Block until all files are dumped to disk.
   for (auto& thread : threads) {
     thread.join();
   }

@@ -1,0 +1,15 @@
+# Build artifacts
+mbox2eml
+mbox2eml.exe
+build/
+*.o
+*.obj
+
+# Large local test corpus (real Google Takeout mbox + extracted .eml files)
+testdata/
+
+# macOS / editor cruft
+.DS_Store
+
+# Agent/orchestration operational state
+.omc/

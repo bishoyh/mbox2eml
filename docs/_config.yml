@@ -1,0 +1,28 @@
+title: mbox2eml
+description: Explode an mbox archive into individual .eml files. Fast, parallel, no dependencies beyond a C++23 compiler.
+remote_theme: just-the-docs/just-the-docs
+url: https://twardoch.github.io
+baseurl: /mbox2eml
+
+# just-the-docs settings
+color_scheme: light
+search_enabled: true
+heading_anchors: true
+
+aux_links:
+  "mbox2eml on GitHub":
+    - "https://github.com/twardoch/mbox2eml"
+aux_links_new_tab: true
+
+plugins:
+  - jekyll-remote-theme
+
+# GitHub Pages builds only files it needs; skip the repo's build cruft.
+exclude:
+  - Makefile
+  - build.sh
+  - install.sh
+  - publish.sh
+  - tests
+  - testdata
+  - mbox2eml.cc
